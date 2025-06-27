@@ -3,47 +3,50 @@ package router
 import (
 	"ingestion-service/handlers"
 	"ingestion-service/middleware"
-	"ingestion-service/models"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
-// SetupRouter configures and returns the Gin router
-func SetupRouter() *gin.Engine {
+// SetupRouter configures and returns the Gin router with dependencies
+func SetupRouter(eventHandler *handlers.EventHandler, logger *zap.Logger) *gin.Engine {
 	// Create Gin router
-	router := gin.Default()
+	router := gin.New()
 
-	// Add CORS middleware
+	// Add middleware
 	router.Use(middleware.CORSMiddleware())
+	router.Use(middleware.LoggingMiddleware(logger))
+	router.Use(middleware.ValidationMiddleware())
+	router.Use(gin.Recovery())
 
 	// Health check endpoint
-	router.GET("/health", healthCheck)
+	router.GET("/health", eventHandler.HealthCheck)
 
 	// API routes
 	api := router.Group("/api/v1")
 	{
-		// Initialize handlers
-		eventHandler := handlers.NewEventHandler()
-
 		// Event tracking endpoint
 		api.POST("/events/track", eventHandler.TrackEvent)
 
-		// Status endpoint
+		// Stats endpoint
+		api.GET("/stats", eventHandler.GetStats)
+
+		// Status endpoint (legacy)
 		api.GET("/status", statusCheck)
 	}
+
+	logger.Info("Router configured successfully",
+		zap.String("health_endpoint", "/health"),
+		zap.String("events_endpoint", "/api/v1/events/track"),
+		zap.String("stats_endpoint", "/api/v1/stats"),
+	)
 
 	return router
 }
 
-// healthCheck handles health check requests
-func healthCheck(c *gin.Context) {
-	response := models.NewHealthResponse()
-	c.JSON(http.StatusOK, response)
-}
-
-// statusCheck handles status check requests
+// statusCheck handles status check requests (legacy endpoint)
 func statusCheck(c *gin.Context) {
 	response := gin.H{
 		"status":    "running",
@@ -51,6 +54,11 @@ func statusCheck(c *gin.Context) {
 		"version":   "1.0.0",
 		"timestamp": time.Now().UTC(),
 		"message":   "Service is ready to receive events",
+		"endpoints": gin.H{
+			"health": "/health",
+			"events": "/api/v1/events/track",
+			"stats":  "/api/v1/stats",
+		},
 	}
 	c.JSON(http.StatusOK, response)
 }
